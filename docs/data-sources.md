@@ -35,3 +35,42 @@ On 2026-10-10, real preprocessing completed for the explicitly selected Rank 1 p
 The configured graph completed its Sigma0 calibration and terrain-correction operators without a calibration LUT warning, and the output rasters contain finite positive linear-power values. This verifies graph execution and raster structure, not absolute radiometric accuracy against a reference target. The product must not be treated as model-ready: there is no checked model input contract or checkpoint, and the manifest retains `blocked_unknown_model_contract` and `analysis_ready: false`.
 
 The output GeoTIFF tags and provenance manifest record “Contains modified Copernicus Sentinel data 2026.” and both applicable Copernicus WorldDEM-30 source/adaptation notices above. The synthetic raster tests verify reprojection/grid alignment logic only; they are not satellite-derived outputs.
+
+## Phase 3 candidate dataset
+
+Kuro Siwo is the candidate for later training, pinned to Hugging Face revision
+`e8e61b7b1254b04bfa2b5e26d43db90cb86b5004`. Its dataset card declares CC BY
+4.0; cite Bountos et al. (2024) and retain the license attribution/terms. The
+author training/event split configuration is separately pinned to
+`Orion-AI-Lab/KuroSiwo` commit
+`4347ed173c4e48f5a9d578bb5fe8453706b08e5e`. Repository code is MIT licensed,
+but that does not replace the dataset's CC BY 4.0 terms. The exact source and
+split details are recorded in `ml/configs/kuro_siwo_splits.json` and
+`docs/model-evaluation.md`.
+
+On 2026-10-11, the 3,105,280,000-byte Kuro Siwo scout and a 10,914,856,960-byte
+pinned cache archive were downloaded and SHA-256 verified. The scout contains
+author-test event `1111013`, despite its `train_GRD` folder. The second archive
+contains nine events (118, 130, 147, 174, 205, 267, 273, 275, 277), including
+both author-train and author-test events; it contains no validation event and
+is not a complete training subset. A separate 167,325,696-byte partial for
+`test_GRD/shard-00001.tar` has no active downloader and is incomplete. No
+model training or evaluation has used these archives. The checkpoint links
+still do not have a verified weight license/checksum for this project, so the
+custom model remains untrained. Sample assignment must use `actid`, never the
+archive folder. Sen1Floods11 remains excluded until its dataset license is
+verified. Copernicus EMS/EMSR927 and other published flood/damage products were
+not ingested and remain restricted to independent validation only.
+
+On 2026-10-14, the user explicitly approved and downloaded the pinned
+`train_GRD/shard-00001.tar` only. Its size is 10,914,938,880 bytes; SHA-256
+`f6a3d55c0c36497a310f34d91b6a476af926e261c5047ce6045016f45c18930d` matches
+the pinned blob digest, the TAR listing check passed, and all 6,000 samples
+decoded. The shard contains author-train events 1111004, 1111005, 1111006,
+1111009; author-validation event 1111008; and author-test event 1111007. The
+refreshed three-shard partial inventory now includes all three author splits,
+16 known event IDs, and no unknown IDs. It is not the full benchmark. The
+validation portion is only 81 samples from one event; this is enough to
+exercise the guarded prototype pipeline, not to claim stable model selection.
+The 2026 Nepal case-study imagery remains excluded from training and
+validation. No other Kuro Siwo shard was downloaded in this step.

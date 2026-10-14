@@ -19,7 +19,7 @@ from rasterio.transform import from_origin
 
 from apps.api.app.core.config import Settings
 from apps.api.app.main import app
-from apps.api.app.schemas.downloads import ProductDownloadSelection
+from apps.api.app.schemas.downloads import ProductDownloadSelection, ProductPairDownloadPreviewRequest
 from apps.api.app.services.product_downloads import (
     ProductDownloadError,
     ProductDownloadService,
@@ -258,6 +258,15 @@ def selection(role: str = "pre_event") -> ProductDownloadSelection:
     )
 
 
+def preview_request() -> ProductPairDownloadPreviewRequest:
+    return ProductPairDownloadPreviewRequest(
+        pre_scene_id=PRE_ID,
+        post_scene_id=POST_ID,
+        event_date=date(2026, 8, 26),
+        bbox=tuple(AOI),
+    )
+
+
 def settings_for(path: Path, *, credentials: bool = True, max_attempts: int = 3, max_bytes: int = 10_000_000) -> Settings:
     return Settings(
         data_dir=path,
@@ -314,6 +323,36 @@ class ProductDownloadServiceTests(unittest.TestCase):
         self.assertEqual(mock.counts["odata"], 1)
         self.assertEqual(mock.counts["download"], 1)
         self.assertEqual(mock.seen_authorization, ["Bearer test-bearer-token-do-not-persist"])
+
+    def test_pair_preview_reports_both_sizes_without_creating_jobs_or_files(self) -> None:
+        mock = MockCDSE(self.archive)
+        service = self.service(mock)
+
+        preview = service.preview_pair(preview_request())
+
+        self.assertEqual(preview["pre_event"]["scene_id"], PRE_ID)
+        self.assertEqual(preview["post_event"]["scene_id"], POST_ID)
+        self.assertEqual(preview["pre_event"]["expected_size_bytes"], len(self.archive))
+        self.assertEqual(preview["post_event"]["expected_size_bytes"], len(self.archive))
+        self.assertEqual(preview["total_size_bytes"], len(self.archive) * 2)
+        self.assertGreater(preview["available_disk_bytes"], 0)
+        self.assertEqual(mock.counts["stac"], 2)
+        self.assertEqual(mock.counts["odata"], 2)
+        self.assertEqual(mock.counts["download"], 0)
+        self.assertFalse(service.manifest_path.exists())
+        self.assertFalse(self.data_dir.exists())
+
+    def test_pair_preview_requires_credentials_before_catalogue_access(self) -> None:
+        mock = MockCDSE(self.archive)
+        service = self.service(mock, credentials=False)
+
+        with self.assertRaises(ProductDownloadError) as context:
+            service.preview_pair(preview_request())
+
+        self.assertEqual(context.exception.code, "credentials_required")
+        self.assertEqual(mock.counts["stac"], 0)
+        self.assertEqual(mock.counts["odata"], 0)
+        self.assertEqual(mock.counts["download"], 0)
 
     def test_gcp_georeferenced_geotiff_is_inspected_without_reading_pixels(self) -> None:
         result = self.start_and_run(self.service(MockCDSE(make_safe_archive(with_gcps=True))))
@@ -642,6 +681,45 @@ class ProductDownloadApiTests(unittest.TestCase):
                     "asset_key": "Product",
                 },
             )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "credentials_required")
+
+    def test_preview_endpoint_returns_sizes_without_starting_download(self) -> None:
+        from apps.api.app.api.v1 import downloads as downloads_api
+
+        archive = make_safe_archive()
+        mock = MockCDSE(archive)
+        service = ProductDownloadService(
+            settings_for(Path(tempfile.mkdtemp())),
+            transport=httpx.MockTransport(mock),
+            sleep=lambda _seconds: None,
+        )
+        client = TestClient(app)
+        with patch.object(downloads_api, "get_product_download_service", return_value=service):
+            response = client.post(
+                "/api/v1/downloads/preview",
+                json={"pre_scene_id": PRE_ID, "post_scene_id": POST_ID, "event_date": "2026-08-26", "bbox": AOI},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total_size_bytes"], len(archive) * 2)
+        self.assertEqual(mock.counts["download"], 0)
+        self.assertFalse(service.manifest_path.exists())
+
+    def test_preview_endpoint_reports_missing_credentials(self) -> None:
+        from apps.api.app.api.v1 import downloads as downloads_api
+
+        service = ProductDownloadService(
+            settings_for(Path(tempfile.mkdtemp()), credentials=False),
+            transport=httpx.MockTransport(MockCDSE(make_safe_archive())),
+            sleep=lambda _seconds: None,
+        )
+        with patch.object(downloads_api, "get_product_download_service", return_value=service):
+            response = TestClient(app).post(
+                "/api/v1/downloads/preview",
+                json={"pre_scene_id": PRE_ID, "post_scene_id": POST_ID, "event_date": "2026-08-26", "bbox": AOI},
+            )
+
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"]["code"], "credentials_required")
 

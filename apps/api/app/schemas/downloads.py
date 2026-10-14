@@ -48,6 +48,54 @@ class ProductDownloadSelection(BaseModel):
         return self.post_scene_id if self.role == "pre_event" else self.pre_scene_id
 
 
+class ProductPairDownloadPreviewRequest(BaseModel):
+    """Preflight one explicitly selected pair without creating download jobs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pre_scene_id: str = Field(min_length=12, max_length=180)
+    post_scene_id: str = Field(min_length=12, max_length=180)
+    event_date: date
+    bbox: tuple[float, float, float, float]
+
+    @field_validator("pre_scene_id", "post_scene_id")
+    @classmethod
+    def validate_scene_id(cls, value: str) -> str:
+        if not SCENE_ID_PATTERN.fullmatch(value):
+            raise ValueError("scene IDs must be Sentinel-1 catalogue identifiers")
+        return value
+
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def validate_bbox(cls, value: Any) -> tuple[float, float, float, float]:
+        parsed = ObservationSearchQuery.parse_bbox(value)
+        return ObservationSearchQuery.validate_bbox_bounds(parsed)
+
+    @model_validator(mode="after")
+    def validate_pair(self) -> "ProductPairDownloadPreviewRequest":
+        if self.pre_scene_id == self.post_scene_id:
+            raise ValueError("pre_scene_id and post_scene_id must identify different observations")
+        return self
+
+
+class ProductAssetPreview(BaseModel):
+    scene_id: str
+    role: Literal["pre_event", "post_event"]
+    product_name: str
+    asset_key: Literal["Product"] = "Product"
+    acquisition_start: datetime | None = None
+    expected_size_bytes: int
+    provider_checksums: list[dict[str, str]] = Field(default_factory=list)
+
+
+class ProductPairDownloadPreviewResponse(BaseModel):
+    pre_event: ProductAssetPreview
+    post_event: ProductAssetPreview
+    total_size_bytes: int
+    available_disk_bytes: int
+    warnings: list[str] = Field(default_factory=list)
+
+
 DownloadStatus = Literal[
     "selected",
     "downloading",

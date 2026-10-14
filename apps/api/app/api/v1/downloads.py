@@ -2,7 +2,12 @@ import re
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
-from ...schemas.downloads import ProductDownloadResponse, ProductDownloadSelection
+from ...schemas.downloads import (
+    ProductDownloadResponse,
+    ProductDownloadSelection,
+    ProductPairDownloadPreviewRequest,
+    ProductPairDownloadPreviewResponse,
+)
 from ...services.product_downloads import ProductDownloadError, ProductDownloadService
 
 
@@ -27,6 +32,16 @@ def _service_http_error(exc: ProductDownloadError) -> HTTPException:
             "upstream_status": exc.upstream_status,
         },
     )
+
+
+@router.post("/preview", response_model=ProductPairDownloadPreviewResponse)
+def preview_product_pair(selection: ProductPairDownloadPreviewRequest) -> ProductPairDownloadPreviewResponse:
+    """Check availability, checksums, and exact sizes without starting transfers."""
+    service = get_product_download_service()
+    try:
+        return ProductPairDownloadPreviewResponse.model_validate(service.preview_pair(selection))
+    except ProductDownloadError as exc:
+        raise _service_http_error(exc) from exc
 
 
 @router.post("", response_model=ProductDownloadResponse, status_code=status.HTTP_202_ACCEPTED)

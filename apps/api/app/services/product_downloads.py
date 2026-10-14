@@ -19,7 +19,7 @@ import uuid
 import httpx
 
 from ..core.config import Settings
-from ..schemas.downloads import ProductDownloadSelection
+from ..schemas.downloads import ProductDownloadSelection, ProductPairDownloadPreviewRequest
 from ..schemas.observations import ObservationMetadata
 from ..services.product_validation import (
     ProductValidationError,
@@ -554,42 +554,93 @@ class ProductDownloadService:
     def _find_duplicate(self, selection: ProductDownloadSelection) -> dict[str, Any] | None:
         return self._deduplicate(selection)
 
-    def request_download(self, selection: ProductDownloadSelection) -> tuple[dict[str, Any], bool]:
-        duplicate = self._find_duplicate(selection)
-        if duplicate is not None:
-            return duplicate, False
-
+    def _verified_pair(self, pre_scene_id: str, post_scene_id: str, event_date, bbox):
         if not self.settings.has_cdse_credentials:
             raise ProductDownloadError(
                 "credentials_required",
-                "Set CDSE_USERNAME and CDSE_PASSWORD in the API environment before requesting a product download.",
+                "Set CDSE_USERNAME and CDSE_PASSWORD in the API environment before checking product availability.",
                 503,
             )
-
-        pre_item, pre = self._fetch_item(selection.pre_scene_id)
-        post_item, post = self._fetch_item(selection.post_scene_id)
-        pairs = rank_observation_pairs([pre], [post], selection.bbox, selection.event_date)
+        pre_item, pre = self._fetch_item(pre_scene_id)
+        post_item, post = self._fetch_item(post_scene_id)
+        pairs = rank_observation_pairs([pre], [post], bbox, event_date)
         if not pairs or pairs[0].verification_status != "compatible":
             raise ProductDownloadError(
                 "pair_not_compatible",
                 "The selected products no longer pass the compatible pre/post pair checks for this event date and AOI.",
                 422,
             )
+        return pre_item, pre, post_item, post
 
-        selected_item = pre_item if selection.role == "pre_event" else post_item
-        selected_observation = pre if selection.role == "pre_event" else post
-        assets = selected_item.get("assets")
+    @staticmethod
+    def _selected_product_asset(item: dict[str, Any], observation: ObservationMetadata) -> tuple[dict[str, Any], str]:
+        assets = item.get("assets")
         if not isinstance(assets, dict):
             raise ProductDownloadError("asset_unavailable", "The selected STAC item has no asset list.", 409)
-        asset = assets.get(selection.asset_key)
+        asset = assets.get("Product")
         if not isinstance(asset, dict):
             raise ProductDownloadError("asset_unavailable", "The selected Product asset is not present on this STAC item.", 409)
         if asset.get("type") != "application/zip" or "archive" not in asset.get("roles", []):
             raise ProductDownloadError("unsupported_asset", "Only the selected item's native ZIP Product archive is supported; no asset substitution was made.", 422)
-        product_name = selected_observation.product_name
+        product_name = observation.product_name
         if not product_name or not product_name.endswith(".SAFE"):
             raise ProductDownloadError("asset_unavailable", "The selected STAC item does not expose a SAFE product name for OData lookup.", 409)
+        return asset, product_name
 
+    def preview_pair(self, request: ProductPairDownloadPreviewRequest) -> dict[str, Any]:
+        """Verify selected pair availability and sizes without creating jobs or files."""
+        pre_item, pre, post_item, post = self._verified_pair(
+            request.pre_scene_id, request.post_scene_id, request.event_date, request.bbox
+        )
+        pre_asset, pre_name = self._selected_product_asset(pre_item, pre)
+        post_asset, post_name = self._selected_product_asset(post_item, post)
+        pre_product = self._lookup_odata_product(pre_name, pre_asset)
+        post_product = self._lookup_odata_product(post_name, post_asset)
+        total_size = pre_product["content_length"] + post_product["content_length"]
+        probe = self.settings.data_dir
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        available_disk = shutil.disk_usage(probe).free
+        warnings = [
+            "This availability and size preview creates no download jobs and writes no product files.",
+            "The listed total covers the two raw ZIP products only; SNAP processing needs additional temporary and output space.",
+        ]
+        if available_disk < total_size:
+            warnings.append("Available disk space is below the combined raw product size; do not start both downloads until storage is available.")
+        return {
+            "pre_event": {
+                "scene_id": pre.scene_id,
+                "role": "pre_event",
+                "product_name": pre_name,
+                "acquisition_start": pre.acquisition_start,
+                "expected_size_bytes": pre_product["content_length"],
+                "provider_checksums": pre_product["provider_checksums"],
+            },
+            "post_event": {
+                "scene_id": post.scene_id,
+                "role": "post_event",
+                "product_name": post_name,
+                "acquisition_start": post.acquisition_start,
+                "expected_size_bytes": post_product["content_length"],
+                "provider_checksums": post_product["provider_checksums"],
+            },
+            "total_size_bytes": total_size,
+            "available_disk_bytes": available_disk,
+            "warnings": warnings,
+        }
+
+    def request_download(self, selection: ProductDownloadSelection) -> tuple[dict[str, Any], bool]:
+        duplicate = self._find_duplicate(selection)
+        if duplicate is not None:
+            return duplicate, False
+
+        pre_item, pre, post_item, post = self._verified_pair(
+            selection.pre_scene_id, selection.post_scene_id, selection.event_date, selection.bbox
+        )
+
+        selected_item = pre_item if selection.role == "pre_event" else post_item
+        selected_observation = pre if selection.role == "pre_event" else post
+        asset, product_name = self._selected_product_asset(selected_item, selected_observation)
         odata = self._lookup_odata_product(product_name, asset)
         self.settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if shutil.disk_usage(self.settings.data_dir).free < odata["content_length"]:

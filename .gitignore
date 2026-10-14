@@ -15,8 +15,12 @@ data/raw/**
 !data/raw/.gitkeep
 data/processed/**
 !data/processed/.gitkeep
+data/validation/**
+!data/validation/.gitkeep
 data/manifests/sentinel1_preprocessing/**
 !data/manifests/sentinel1_preprocessing/.gitkeep
+data/manifests/analyses/**
+!data/manifests/analyses/.gitkeep
 data/outputs/**
 !data/outputs/.gitkeep
 ml/data/**

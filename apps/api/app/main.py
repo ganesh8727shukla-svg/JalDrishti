@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 
 from .api.v1.downloads import router as downloads_router
+from .api.v1.analyses import router as analyses_router
+from .api.v1.case_study import router as case_study_router
 from .api.v1.observations import router as observations_router
 from .api.v1.preprocessing import router as preprocessing_router
 
@@ -13,7 +15,9 @@ app = FastAPI(
 
 app.include_router(observations_router)
 app.include_router(downloads_router)
+app.include_router(analyses_router)
 app.include_router(preprocessing_router)
+app.include_router(case_study_router)
 
 
 @app.get("/api/v1/health", tags=["health"])

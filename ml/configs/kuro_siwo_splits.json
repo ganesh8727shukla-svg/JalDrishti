@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "dataset": {
+    "id": "orion-ai-lab/Kuro-Siwo-Webdataset",
+    "revision": "e8e61b7b1254b04bfa2b5e26d43db90cb86b5004",
+    "license": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "card_url": "https://huggingface.co/datasets/orion-ai-lab/Kuro-Siwo-Webdataset",
+    "citation": "Bountos et al. (2024), Kuro Siwo: 33 billion m^2 under the water. A global multi-temporal satellite dataset for rapid flood mapping, NeurIPS 2024.",
+    "download_status": "selected_archives_present_in_partial_cache",
+    "split_audit_status": "partial_inventory_has_train_validation_and_test_events"
+  },
+  "author_split_source": {
+    "repository": "https://github.com/Orion-AI-Lab/KuroSiwo",
+    "revision": "4347ed173c4e48f5a9d578bb5fe8453706b08e5e",
+    "path": "configs/train/data_config.json"
+  },
+  "splits": {
+    "train": [130, 470, 555, 118, 174, 324, 421, 554, 427, 518, 502, 498, 497, 496, 492, 147, 267, 273, 275, 417, 567, 1111011, 1111004, 1111009, 1111010, 1111006, 1111005],
+    "validation": [514, 559, 279, 520, 437, 1111003, 1111008],
+    "test": [321, 561, 445, 562, 411, 1111002, 277, 1111007, 205, 1111013]
+  },
+  "audit_note": "Never trust archive folder names: filter every sample by actid. The current partial training/evaluation inventory contains train_GRD/shard-00001, train_GRD/shard-00002, and test_GRD/shard-00000. Their observed event IDs are 118, 130, 147, 174, 205, 267, 273, 275, 277, 1111004, 1111005, 1111006, 1111007, 1111008, 1111009, and 1111010; all map to the pinned author split and no unknown IDs were found. The subset includes author-train, validation, and test events, so the partial-subset training/evaluation guards can run. Nine events are stored under a directory whose name disagrees with their author split. The separately audited train_GRD/shard-00004 scout contains held-out test event 1111013 and is not in this training inventory. The full inventory has not been downloaded or audited."
+}

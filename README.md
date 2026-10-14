@@ -4,7 +4,7 @@ Standalone flood intelligence MVP for the Multimodal AI Hackathon 2026, Track B.
 
 ## Current milestone
 
-Phase 1 foundation plus Phase 2 Milestones 1–2, controlled Sentinel-1 downloads and validation, and backend-only SAR preprocessing. On 2026-10-10, SNAP 14.0.0 completed the selected real pre/post pair through orbit handling, thermal and border-noise processing, Sigma0 calibration, terrain correction, and common-grid alignment. Both output rasters were independently reopened and checked; details and limitations are recorded below. The frontend remains unchanged.
+Phase 1/2 catalogue, controlled-download, validation, and SNAP preprocessing workflows are implemented. Phase 3 now includes an audited, deliberately partial Kuro Siwo training pipeline and a research U-Net checkpoint; its one-event held-out evaluation is documented, but the checkpoint is not approved for Nepal inference. Phase 4 OSM preparation, independent-mask validation handoff, and exposure gates are implemented. The dashboard supports editable AOI/date search, pair ranking, explicit size preflight, sequential selected-product downloads, SNAP preprocessing, and asynchronous analysis status. The actual Nepal mask, flood area, and infrastructure exposure remain pending because the real SNAP pair is not yet validated for this model and there is no independent Nepal flood reference accepted for evaluation.
 
 ## Run locally
 
@@ -68,6 +68,25 @@ npm run dev
 ```
 
 Open the URL printed by Vite, normally `http://127.0.0.1:5173`. The Vite development server proxies `/api` requests to the API on port 8765.
+
+### Real case study and interactive workflow
+
+With the API and Vite servers running, the dashboard requests the latest completed, checksum-matching SNAP pair from `GET /api/v1/case-study/latest` and displays actual Sigma0 VV quicklooks. The previews are served from `GET /api/v1/case-study/latest/rasters/pre_event.png` and `/post_event.png`. They are display images, not georeferenced analysis rasters. The JSON includes scene IDs, acquisition times, CRS, bounds, raster dimensions, attribution, warnings, and any matching prepared OSM inventory. Flood area, mask, probability, and boundaries are `null` until an accepted model produces validated results.
+
+Check the summary and a preview directly:
+
+```sh
+curl -s http://127.0.0.1:8765/api/v1/case-study/latest
+curl -I http://127.0.0.1:8765/api/v1/case-study/latest/rasters/pre_event.png
+```
+
+The case-study quicklook card reads existing local artifacts. The separate interactive workflow below it accepts an editable WGS84 bounding box and event date. It searches CDSE pair candidates, allows selection only of metadata-compatible pairs, and calls `POST /api/v1/downloads/preview` to revalidate product availability and show exact raw sizes and free disk space. That preview creates no download jobs. A second explicit button downloads the selected native `Product` assets one at a time and polls their validation status. After both pass, another explicit action starts the SNAP job. Auxiliary orbit/DEM downloads are off by default and require the checkbox. After SNAP completes, the analysis action calls the asynchronous analysis API and displays its real status; with current model/input approval settings it correctly reports blocked/pending rather than fabricating a result. The UI accepts a bbox, not a place-name geocoder.
+
+Successful inference artifacts (when all gates pass) are served from API routes, not public cloud URLs. The dashboard exposes a mask or boundary link only when the API returns a validated result. The app has no authentication layer and should not be exposed to an untrusted network. Raw products and derived rasters remain outside Git.
+
+On 2026-10-14, the full available suites passed: API **88/88**, ML **43/43**, geospatial **34/34**, and the web production build passed. The API tests emitted Rasterio `NotGeoreferencedWarning` messages for deliberate synthetic invalid-raster fixtures; there were no test failures. The current local case-study endpoint reports the exploratory model and keeps flood area, mask, and boundaries pending. The current API smoke check is listed in the final milestone record below.
+
+The API suite including the new case-study routes passed **75/75** tests; the ML suite passed **27/27**; the geospatial suite passed **34/34**; and the web production build passed. A local TestClient smoke check against the real manifests and rasters returned HTTP 200 for health, the case-study JSON, and both PNG previews. The JSON truthfully reports `flooded_area_km2: null`, no accepted checkpoint, and the provider-dated OSM inventory only.
 
 ## Milestone record
 
@@ -157,7 +176,7 @@ These tests do not contact CDSE or download large products. Both selected live S
 
 ## SAR preprocessing (backend only)
 
-The backend adds `POST /api/v1/preprocessing` to create a job from two already validated download IDs, and `GET /api/v1/preprocessing/{job_id}` to read its status. It reopens the selected SAFE archives, verifies the pair against the live CDSE STAC items, checks event bracketing, orbit, polarization and footprint coverage, then constructs an ESA SNAP graph for orbit-file application, metadata-gated thermal-noise removal, GRD border-noise removal, linear Sigma0 calibration, and terrain correction with the explicitly selected Copernicus 30 m DEM. Rasterio then crops/reprojects both calibrated VV/VH outputs to one projected AOI grid and uses a shared valid-data mask. It does not speckle-filter, convert to dB, run AI inference, or claim model readiness.
+The backend adds `POST /api/v1/preprocessing` to create a job from two already validated download IDs, and `GET /api/v1/preprocessing/{job_id}` to read its status. It reopens the selected SAFE archives, verifies the pair against the live CDSE STAC items, checks event bracketing, orbit, polarization and footprint coverage, then constructs an ESA SNAP graph for orbit-file application, metadata-gated thermal-noise removal, GRD border-noise removal, linear Sigma0 calibration, and terrain correction with the explicitly selected Copernicus 30 m DEM. Rasterio then crops/reprojects both calibrated VV/VH outputs to one projected AOI grid and uses a shared valid-data mask. The current output remains blocked from model use until the model-specific input and domain-shift review passes.
 
 CDSE documents COG_SAFE creation as converting the original measurement GeoTIFFs to COG and updating the SAFE manifest; it does not describe that conversion as radiometric calibration. Based on that documented conversion process, the graph applies Sigma0 calibration once. It reads each SAFE annotation's per-polarization `thermalNoiseCorrectionPerformed` flag and only inserts SNAP's thermal-noise operator when both selected products report the correction has not already been performed. [CDSE COG_SAFE documentation](https://documentation.dataspace.copernicus.eu/Data/Others/Sentinel1_COG.html), [SNAP Thermal Noise Removal help](https://step.esa.int/main/wp-content/help/versions/14.0.0/snap-toolboxes/eu.esa.microwavetbx.sar.op.calibration.ui/operators/ThermalNoiseRemoval.html).
 
@@ -225,6 +244,227 @@ The corrected job `98d8cdb3-d6f5-4d2d-b961-a1295ca60a3d` finished with API statu
 
 Independent Rasterio checks reopened `data/processed/sentinel1/98d8cdb3-d6f5-4d2d-b961-a1295ca60a3d/pre_event.tif` and `post_event.tif`. Both are two-band float32 EPSG:32645 rasters, 1110 × 1247 pixels, with identical affine transforms, `Sigma0_VV,Sigma0_VH` band descriptions, NaN NoData, matching SHA-256 values from the manifest, and identical valid-data masks. The common mask contains 1,317,470 pixels and covers 100% of the requested AOI; all valid VV/VH values are finite and positive. The output grid bounds in WGS84 are approximately `[84.03693, 28.19760, 84.15300, 28.31242]`, enclosing the requested AOI. Pre SHA-256: `7809a02620c34e01f86ff24e3d0f2e820a81be77383a527f5e8d59611b80a148`; post SHA-256: `063d527992a66aadc39ab1846a0c1e4de79db9ac2cc0b705002d5dd1a41b67f2`.
 
-The original downloaded CDSE ZIP archives remain unchanged: their SHA-256 values still match the download manifest (`2872c3fc91c198b857d4aa07105583cc904be2373ec7bb392af560a9fd7b48a8` pre and `c4a5915a7eb19284da7cf8b30d3322dd36a8e0660cc2827584e97de2b03800c5` post). The COG2GRD working copies were separate staging inputs. The old partial output from the failed first run was preserved. The outputs demonstrate successful execution of the configured calibration and terrain-correction graph, but there was no independent radiometric reference comparison; therefore this is not a full scientific calibration QA. The repository still has no verified model input contract/checkpoint, so `model_input_status` remains `blocked_unknown_model_contract` and the rasters are explicitly `analysis_ready: false`. No AI inference, masks, or flood estimates were produced.
+The original downloaded CDSE ZIP archives remain unchanged: their SHA-256 values still match the download manifest (`2872c3fc91c198b857d4aa07105583cc904be2373ec7bb392af560a9fd7b48a8` pre and `c4a5915a7eb19284da7cf8b30d3322dd36a8e0660cc2827584e97de2b03800c5` post). The COG2GRD working copies were separate staging inputs. The old partial output from the failed first run was preserved. The outputs demonstrate successful execution of the configured calibration and terrain-correction graph, but there was no independent radiometric reference comparison; therefore this is not a full scientific calibration QA. An exploratory Kuro Siwo checkpoint now exists, but it is not approved for Nepal inference; the SNAP manifest still sets `model_input_status` to `blocked_unknown_model_contract` and the rasters remain `analysis_ready: false`. No Nepal inference, flood mask, or flood estimate was produced.
 
 The regression command on 2026-10-10 was `./.venv/bin/python -m unittest discover -s apps/api/tests -v`: **70 tests passed**. This includes 11 preprocessing tests and the existing health, catalogue, pair-ranking, and download tests. The run emitted the existing Starlette/httpx deprecation warning and Rasterio `NotGeoreferencedWarning` from synthetic fixtures; there were no failures. Unit tests did not contact CDSE or download auxiliary data; the separate real preprocessing job above did use the selected satellite products and SNAP auxiliary data.
+
+## Phase 3: segmentation foundation (exploratory model, not deployment-approved)
+
+The Phase 3 implementation adds a pinned Kuro Siwo source/split manifest,
+strict TAR sample reader with event-ID filtering, a small newly initialized
+four-channel U-Net, tiling, input-raster checks, metrics, an event-shard audit
+command, and guarded training/evaluation commands. Details are in
+[docs/model-evaluation.md](docs/model-evaluation.md) and
+[docs/limitations.md](docs/limitations.md).
+
+The Kuro Siwo dataset card declares CC BY 4.0; cite Bountos et al. (2024) and
+preserve its attribution. Sen1Floods11 is excluded pending license
+verification. The 3.105 GB scout is an author-test event despite its
+`train_GRD` folder. The verified 10.915 GB `test_GRD/shard-00000.tar` contains
+seven author-train events and two author-test events. The verified
+`train_GRD/shard-00001.tar` is 10,914,938,880 bytes with SHA-256
+`f6a3d55c0c36497a310f34d91b6a476af926e261c5047ce6045016f45c18930d`; its
+6,000 decoded samples include author-train events 1111004, 1111005, 1111006,
+and 1111009, validation event 1111008, and held-out test event 1111007. The
+verified `train_GRD/shard-00002.tar` has SHA-256
+`448fc21a67dc1b4d5fd4cf8c3bb4f926a129ca5cf13899c9f7d6667bb72b74a3` and
+contains 6,000 samples from author-train events 1111009 and 1111010. Detailed,
+Git-ignored sample audits are in
+`data/raw/kuro-siwo/subsets/track-b-initial/`. The refreshed partial audit
+finds 16 known event IDs, no unknown IDs, and train, validation, and test
+events; nine events are stored under folders that disagree with their author
+split. Samples are assigned by `actid`, not folder. Validation is currently
+only one event with 81 samples, so this subset supports a guarded prototype
+run but not robust model acceptance. A separate 167,325,696-byte partial
+test-shard transfer remains incomplete and is not used.
+
+The test-folder shard also has an unresolved data-quality issue: 651 samples
+contain `mask.npy` value `3` on pixels whose `valid_mask.npy` says valid. The
+published label contract lists only 0/1/2, so those labels are not remapped.
+That archive is excluded from the selected training inventory. The
+Git-ignored, symlink-only training subset at
+`data/raw/kuro-siwo/subsets/track-b-trainable-2026-10-14/` uses only verified
+`train_GRD/shard-00001.tar` and `shard-00002.tar`; its fresh event audit is
+`event-audit.json`. It contains 9,590 author-train samples, 81 validation
+samples from one event, and 2,329 held-out test samples from one event. This
+is a small prototype subset, not a representative full-corpus evaluation.
+The loader now clips linear Sigma0 at 0.15 before applying the pinned
+per-polarization normalization, matching the published BlackBench setup
+([Kuro Siwo supplementary material](https://proceedings.neurips.cc/paper_files/paper/2024/file/43612b0662cb6a4986edf859fd6ebafe-Supplemental-Datasets_and_Benchmarks_Track.pdf)).
+On the current Nepal pair, 48.4% of common-valid pre-event VV and 51.2% of
+post-event VV pixels exceed that ceiling; this is a material domain gap and
+keeps Nepal inference blocked pending review.
+
+The pinned Kuro Siwo train/test shard folders total about 157.9 GiB. The full
+corpus is not required for an initial subset experiment. Four complete
+archives have been inspected, including the separate 3.105 GB held-out scout.
+The current partial train/validation/test inventory is audited but does not
+cover the full benchmark. The subset training and evaluation commands may run
+with `--allow-partial-subset`; their results must be labeled partial and are
+not deployment approval. No automatic dataset transfer runs from the
+application. Any further archive requires a specific documented need and
+explicit approval if it exceeds 10 GB.
+
+Install the model dependency and run the synthetic-only ML unit tests from the
+repository root:
+
+```sh
+source .venv/bin/activate
+python -m pip install -r ml/requirements.txt
+python -m unittest discover -s ml/tests -v
+```
+
+Earlier suite counts are historical; use the latest run reported in the
+current-milestone section above for the current regression result. The training
+and held-out evaluation were run separately; see the results below.
+
+The current local subset is linked and audited here:
+
+```sh
+python -m ml.src.audit_dataset \
+  --shard-root data/raw/kuro-siwo/subsets/track-b-trainable-2026-10-14 \
+  --output data/raw/kuro-siwo/subsets/track-b-trainable-2026-10-14/event-audit.json \
+  --allow-partial-subset
+```
+
+This audit finds author-train, validation, and held-out test events, so guarded
+partial-subset training and evaluation are available. Unknown event IDs still
+fail, and samples are filtered by `actid`, not archive folder. Validation is
+currently limited to one event and 81 samples; all results remain research
+prototype results pending independent review and preprocessing-compatibility
+checks.
+
+```sh
+python -m ml.src.train \
+  --dataset-root data/raw/kuro-siwo/subsets/track-b-trainable-2026-10-14 \
+  --audit data/raw/kuro-siwo/subsets/track-b-trainable-2026-10-14/event-audit.json \
+  --output ml/checkpoints/jaldrishti-unet-kuro-siwo-20261014.pt \
+  --allow-partial-subset
+
+python -m ml.src.evaluate \
+  --dataset-root data/raw/kuro-siwo/subsets/track-b-trainable-2026-10-14 \
+  --audit data/raw/kuro-siwo/subsets/track-b-trainable-2026-10-14/event-audit.json \
+  --checkpoint ml/checkpoints/jaldrishti-unet-kuro-siwo-20261014.pt \
+  --output reports/generated/jaldrishti-evaluation.json \
+  --allow-partial-subset
+```
+
+The evaluator tunes the flood threshold on validation events, reports
+per-event and aggregate scores plus a descriptive event-cluster bootstrap
+interval, then makes one test pass per checkpoint and records a test-access
+marker. The 2026-10-14 CPU run requested 10 epochs and was stopped after epoch
+5 as validation loss worsened after epoch 1; the best saved checkpoint is
+epoch 1. One test pass completed with flood F1 0.5791 at the validation-selected
+0.30 threshold on held-out event 1111007. This is a small partial-subset result,
+not deployment approval; see [docs/model-evaluation.md](docs/model-evaluation.md)
+and [docs/limitations.md](docs/limitations.md). Training now records each epoch
+atomically and supports early stopping; the existing interrupted training run
+was not resumed or replaced.
+
+### Inference API and validation handoff
+
+An additive, asynchronous inference API is available for an existing completed
+preprocessing job. It accepts the preprocessing job ID, not caller-supplied
+paths or URLs:
+
+```sh
+curl -X POST 'http://127.0.0.1:8765/api/v1/analyses' \
+  -H 'Content-Type: application/json' \
+  --data '{"preprocessing_job_id":"<completed-preprocessing-job-uuid>"}'
+
+curl 'http://127.0.0.1:8765/api/v1/analyses/<analysis-job-uuid>'
+```
+
+The POST returns HTTP 202 and a job ID. Poll the GET route for `queued`,
+`running`, `blocked`, `pending_independent_validation`, `completed`, or
+`failed`. A result is deliberately blocked unless the preprocessing manifest
+has `model_input_status: validated_for_model`, the exact checkpoint and
+evaluation report are approved, and an exact-pair reviewer approval manifest
+is present. Configure optional server-side paths with
+`JALDRISHTI_MODEL_CHECKPOINT`, `JALDRISHTI_MODEL_EVALUATION`, and
+`JALDRISHTI_INFERENCE_APPROVAL`; paths must remain inside the repository.
+The default approval file is
+`ml/approvals/inference-approval.json`; no approval file is currently present.
+It must use `schema_version: jaldrishti.inference-approval.v1`, explicitly set
+`deployment_approved` and `inference_eligible` to true, identify reviewer,
+review time, event ID and `jaldrishti_s1_two_date_v1`, and bind the approval to
+the exact checkpoint SHA-256, evaluation-report SHA-256, pre/post raster
+SHA-256 values, event date and AOI bbox. The evaluation report must separately
+approve the same checkpoint. No credentials belong in these files; do not
+create an approval for the current exploratory checkpoint.
+
+When inference eventually runs, it writes a binary GeoTIFF flood mask, a
+three-class GeoTIFF, an uncalibrated softmax-score GeoTIFF, GeoJSON boundaries,
+and provenance under `data/processed/inference/<analysis-id>/`. Softmax is not
+called probability or confidence. The API keeps flood area, mask and boundary
+URLs null and denies artifact downloads until the independent-reference
+validation report is reviewed and the Phase 4 mask gate accepts it. The current
+Nepal analysis API request returns a blocked job because the existing SNAP
+manifest still marks the pair `blocked_unknown_model_contract`; there is no
+real Nepal inference output.
+
+Preserve any independent reference map under Git-ignored `data/validation/`.
+It must not be used for training or prediction. After an approved inference
+candidate exists, first create a separate nearest-neighbour aligned copy of a
+categorical reference raster. Keep its original file unchanged and provide the
+reference's actual class mapping:
+
+```sh
+python -m ml.src.independent_validation align-reference \
+  --reference-raster data/validation/<event>/reference_original.tif \
+  --mask-manifest data/processed/inference/<analysis-id>/phase4_flood_mask_manifest.json \
+  --output data/validation/<event>/reference_aligned.tif \
+  --source-flood-value <reference-flood-class> \
+  --source-non-flood-values <reference-non-flood-class> [<another-non-flood-class> ...] \
+  --source-nodata-value <reference-nodata-class>
+```
+
+The alignment command records both hashes, class mapping and resampling in a
+sidecar. It does not create a reference map or establish its license. Then
+calculate validation metrics without auto-approving the mask:
+
+```sh
+python -m ml.src.independent_validation validate-mask \
+  --mask-manifest data/processed/inference/<analysis-id>/phase4_flood_mask_manifest.json \
+  --reference-raster data/validation/<event>/reference_aligned.tif \
+  --output reports/generated/<event>-independent-validation.json \
+  --event-id <event-id> --event-date <YYYY-MM-DD> \
+  --bbox <west> <south> <east> <north> \
+  --reference-name '<reference product>' \
+  --reference-url '<official HTTPS source page>' \
+  --reference-license '<applicable license>' \
+  --reference-flood-value 1 --reference-nodata-value 255 \
+  --attest-independent-of-training-data \
+  --attest-not-used-as-prediction-input
+```
+
+The validator requires identical CRS, transform and dimensions; it never
+silently resamples the independent reference. Inspect the report, then a human
+reviewer can apply a named policy and explicit thresholds:
+
+```sh
+python -m ml.src.independent_validation accept-mask \
+  --mask-manifest data/processed/inference/<analysis-id>/phase4_flood_mask_manifest.json \
+  --report reports/generated/<event>-independent-validation.json \
+  --reviewed-by '<reviewer>' --acceptance-policy-id '<policy-id>' \
+  --minimum-flood-iou <0-to-1> --minimum-flood-recall <0-to-1> \
+  --minimum-valid-coverage <0-to-1>
+
+python -m geospatial.phase4_cli check-mask \
+  data/processed/inference/<analysis-id>/phase4_flood_mask_manifest.json \
+  --event-id <event-id> --event-date <YYYY-MM-DD> \
+  --bbox <west> <south> <east> <north>
+```
+
+Only after `check-mask` passes should the existing Phase 4 `exposure` command
+be run with the matching prepared OSM snapshot. It calculates potential spatial
+exposure, not confirmed damage, road closure, or lost access. API raster and
+GeoJSON URLs are served by this local API only after acceptance; this service
+has no authentication layer and must not be exposed to an untrusted network.
+## Phase 4: infrastructure groundwork
+
+The additive OSM snapshot, geometry-preparation, mask-readiness, and exposure groundwork is documented in [docs/phase4-infrastructure.md](docs/phase4-infrastructure.md). On 2026-10-11, the official Geofabrik Nepal PBF was checksum-verified and imported for the Rasuwa AOI. `audit-osm` passed for snapshot `214b1809-502b-469f-bcdb-647e0e723d67` with 8,147 features; `prepare` produced `data/processed/infrastructure/214b1809-502b-469f-bcdb-647e0e723d67/infrastructure_prepared.geojson` (EPSG:4326 output; EPSG:32645 measurements). The provider date is 2026-08-01, so this is date-level pre-event evidence, not exact per-feature history. The raw PBF and derived data are Git-ignored. The live ohsome history attempt did not produce a snapshot. No real exposure results are available because the model is not approved for Nepal and no independently validated flood mask exists.
+
+## Phase 5: road connectivity groundwork
+
+The additive NetworkX road-access scenario and its assumptions are documented in [docs/phase5-connectivity.md](docs/phase5-connectivity.md). The prepared, provider-dated OSM snapshot is available as an input, with date-level provenance caveats. Real connectivity results remain gated because there is no approved real flood mask; no event-specific access figures have been generated.
